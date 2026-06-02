@@ -1,48 +1,58 @@
-#!/bin/bash
-set -e
+#!/usr/bin/env bash
+set -euo pipefail
+
+GREEN='\033[0;32m'; YELLOW='\033[1;33m'; RED='\033[0;31m'; NC='\033[0m'
+info()  { echo -e "${GREEN}[✓]${NC} $*"; }
+warn()  { echo -e "${YELLOW}[!]${NC} $*"; }
+error() { echo -e "${RED}[✗]${NC} $*"; exit 1; }
 
 echo ""
-echo "╔══════════════════════════════════════╗"
-echo "║   🛍  DorbinHome Shop Bot Installer  ║"
-echo "╚══════════════════════════════════════╝"
+echo "╔══════════════════════════════════════════╗"
+echo "║   🛍  DorbinHome Shop Bot  —  Installer  ║"
+echo "╚══════════════════════════════════════════╝"
 echo ""
 
-# Check Docker
 if ! command -v docker &>/dev/null; then
-    echo "📦 Installing Docker..."
+    warn "Docker not found. Installing..."
     curl -fsSL https://get.docker.com | sh
+    info "Docker installed."
 fi
 
-if ! docker compose version &>/dev/null; then
-    echo "📦 Installing Docker Compose plugin..."
-    apt-get install -y docker-compose-plugin 2>/dev/null || true
+if ! docker compose version &>/dev/null 2>&1; then
+    warn "Docker Compose plugin not found. Installing..."
+    apt-get update -qq && apt-get install -y -qq docker-compose-plugin
+    info "Docker Compose installed."
 fi
-
-# Input
-read -p "🤖 Bot Token: " BOT_TOKEN
-if [ -z "$BOT_TOKEN" ]; then echo "❌ BOT_TOKEN required"; exit 1; fi
-
-read -p "👑 Admin Telegram ID (numeric): " ADMIN_ID
-if ! [[ "$ADMIN_ID" =~ ^[0-9]+$ ]]; then echo "❌ ADMIN_ID must be numeric"; exit 1; fi
-
-read -p "📢 Channel ID (e.g. @mychannel, or leave empty): " CHANNEL_ID
-
-# Write .env
-cat > .env << EOF
-BOT_TOKEN=$BOT_TOKEN
-ADMIN_ID=$ADMIN_ID
-CHANNEL_ID=$CHANNEL_ID
-EOF
 
 echo ""
-echo "🐳 Building and starting..."
-docker compose down -v 2>/dev/null || true
+read -rp "🤖  Bot Token (from @BotFather): " BOT_TOKEN
+[[ -z "$BOT_TOKEN" ]] && error "BOT_TOKEN cannot be empty."
+
+read -rp "👑  Admin Telegram ID (numeric): " ADMIN_ID
+[[ ! "$ADMIN_ID" =~ ^[0-9]+$ ]] && error "ADMIN_ID must be a number."
+
+read -rp "📢  Channel ID (e.g. @mychannel) or Enter to skip: " CHANNEL_ID
+
+cat > .env <<EOF
+BOT_TOKEN=${BOT_TOKEN}
+ADMIN_ID=${ADMIN_ID}
+CHANNEL_ID=${CHANNEL_ID}
+DB_PATH=/data/shop.db
+EOF
+info ".env created."
+
+echo ""
+info "Building and starting..."
+docker compose down --remove-orphans 2>/dev/null || true
 docker compose up -d --build
 
 echo ""
-echo "✅ Done! Bot is running."
+echo "╔══════════════════════════════════════════╗"
+echo "║   ✅  Bot is running!                    ║"
+echo "╚══════════════════════════════════════════╝"
 echo ""
-echo "📋 Useful commands:"
-echo "  docker compose logs -f bot    # view logs"
-echo "  docker compose restart bot    # restart"
-echo "  docker compose down           # stop"
+echo "  📋  Logs:     docker compose logs -f bot"
+echo "  🔄  Restart:  docker compose restart bot"
+echo "  🛑  Stop:     docker compose down"
+echo "  ⬆️   Update:   git pull && docker compose up -d --build"
+echo ""

@@ -1,39 +1,76 @@
 # 🛍 DorbinHome — Telegram Channel Shop Bot
 
-بات فروشگاهی تلگرام با قابلیت انتشار محصول در کانال، مدیریت سفارشات و گزارش فروش.
+بات فروشگاهی تلگرام — Python 3.11 + aiogram 3 + SQLite + Docker
+
+---
 
 ## ✨ امکانات
-- افزودن محصول با تصویر، توضیحات، مشخصات، قیمت و موجودی
-- انتشار خودکار محصول در کانال تلگرام با دکمه خرید
-- فرم ثبت سفارش (نام، موبایل، استان، شهر، آدرس، کد پستی)
-- مدیریت سفارشات (تأیید / رد / ارسال شد)
-- اطلاع‌رسانی به کاربر در هر تغییر وضعیت
-- گزارش فروش و آمار کاربران
-- پایگاه داده SQLite (بدون نیاز به PostgreSQL/Redis)
 
-## 🚀 نصب سریع روی VPS
+- 🛍 لیست محصولات با کارت و عکس
+- 🛒 فرم خرید کامل با اعتبارسنجی (نام، موبایل، استان، شهر، آدرس، کدپستی)
+- 📦 تاریخچه سفارشات کاربر
+- 👑 پنل ادمین: افزودن/ویرایش/حذف محصول، مدیریت سفارشات، گزارش فروش
+- 📢 انتشار خودکار محصول در کانال با دکمه خرید
+- 🔔 نوتیف به کاربر در هر تغییر وضعیت سفارش
+
+---
+
+## 🚀 نصب روی VPS
+
+### پیش‌نیاز
+- Ubuntu 20.04+ یا Debian 11+
+- دسترسی root
+
+### مراحل نصب
 
 ```bash
+# ۱. کلون ریپو
 git clone https://github.com/moha100h/dorbinhome.git
 cd dorbinhome
+
+# ۲. اجرای نصب‌کننده
 chmod +x install.sh
 ./install.sh
 ```
 
-## 📋 دستورات مفید
+اسکریپت می‌پرسد:
+- **Bot Token** — از @BotFather
+- **Admin ID** — آیدی عددی شما (از @userinfobot)
+- **Channel ID** — مثلاً `@mychannel` (اختیاری)
+
+---
+
+## 📋 دستورات مدیریت
 
 ```bash
-docker compose logs -f bot    # مشاهده لاگ
-docker compose restart bot    # ری‌استارت
-docker compose down           # توقف
-docker compose up -d          # شروع مجدد
+# لاگ زنده
+docker compose logs -f bot
+
+# ری‌استارت
+docker compose restart bot
+
+# توقف
+docker compose down
+
+# آپدیت
+git pull && docker compose up -d --build
+
+# ری‌ست کامل (حذف دیتابیس)
+docker compose down -v
 ```
 
-## 🛠 توسعه محلی
+---
 
+## ⚙️ تنظیمات (.env)
+
+```env
+BOT_TOKEN=توکن_بات
+ADMIN_ID=آیدی_عددی_ادمین
+CHANNEL_ID=@آیدی_کانال
+DB_PATH=/data/shop.db
+```
+
+بعد از تغییر `.env`:
 ```bash
-cd bot
-pip install -r requirements.txt
-cp ../.env.example ../.env    # ویرایش .env
-python main.py
+docker compose restart bot
 ```

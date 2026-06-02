@@ -1,183 +1,167 @@
-from aiogram import Router, F
-from aiogram.types import CallbackQuery, Message
+from aiogram import Router, F, Bot
+from aiogram.types import Message, CallbackQuery
 from aiogram.fsm.context import FSMContext
 from aiogram.fsm.state import State, StatesGroup
-import aiosqlite
-from config import config
-from database import DB
-from keyboards import cancel_kb, main_menu
+from bot.db.repo import get_product, get_user_by_tg, create_order, get_user_orders, get_order
+from bot.keyboards import cancel_menu, main_menu, confirm_order_kb
+from bot.utils.fmt import order_summary, order_card, admin_order_card
+from bot.core.config import ADMIN_ID
 
 router = Router()
 
 
-class OrderForm(StatesGroup):
-    full_name = State()
-    phone = State()
-    province = State()
-    city = State()
-    address = State()
+class OrderFSM(StatesGroup):
+    full_name   = State()
+    phone       = State()
+    province    = State()
+    city        = State()
+    address     = State()
     postal_code = State()
+    confirm     = State()
 
 
-async def get_product(product_id: int):
-    async with aiosqlite.connect(DB) as db:
-        db.row_factory = aiosqlite.Row
-        async with db.execute("SELECT * FROM products WHERE id=?", (product_id,)) as cur:
-            row = await cur.fetchone()
-            return dict(row) if row else None
+async def _cancel(msg: Message, state: FSMContext) -> bool:
+    if msg.text == "❌ انصراف":
+        await state.clear()
+        await msg.answer("❌ سفارش لغو شد.", reply_markup=main_menu(msg.from_user.id == ADMIN_ID))
+        return True
+    return False
 
 
 @router.callback_query(F.data.startswith("buy:"))
-async def start_purchase(cb: CallbackQuery, state: FSMContext):
-    product_id = int(cb.data.split(":")[1])
-    p = await get_product(product_id)
+async def buy_start(cb: CallbackQuery, state: FSMContext):
+    pid = int(cb.data.split(":")[1])
+    p = await get_product(pid)
     if not p or p["stock"] <= 0:
-        await cb.answer("این محصول موجود نیست.", show_alert=True)
+        await cb.answer("❌ این محصول موجود نیست.", show_alert=True)
         return
-    await state.update_data(product_id=product_id)
-    await state.set_state(OrderForm.full_name)
-    await cb.message.answer("📝 لطفاً نام و نام خانوادگی خود را وارد کنید:", reply_markup=cancel_kb())
+    await state.update_data(product_id=pid)
+    await state.set_state(OrderFSM.full_name)
+    await cb.message.answer(
+        f"🛒 خرید: <b>{p['title']}</b>\n\n📝 <b>نام و نام خانوادگی:</b>",
+        reply_markup=cancel_menu()
+    )
     await cb.answer()
 
 
-@router.message(OrderForm.full_name)
-async def get_full_name(msg: Message, state: FSMContext):
-    if msg.text == "❌ انصراف":
+@router.message(OrderFSM.full_name)
+async def fsm_name(msg: Message, state: FSMContext):
+    if await _cancel(msg, state): return
+    if len(msg.text.strip()) < 3:
+        return await msg.answer("⚠️ نام باید حداقل ۳ کاراکتر باشد:")
+    await state.update_data(full_name=msg.text.strip())
+    await state.set_state(OrderFSM.phone)
+    await msg.answer("📱 <b>شماره موبایل</b> (مثال: 09123456789):")
+
+
+@router.message(OrderFSM.phone)
+async def fsm_phone(msg: Message, state: FSMContext):
+    if await _cancel(msg, state): return
+    p = msg.text.strip().replace(" ", "")
+    if not (p.startswith("09") and len(p) == 11 and p.isdigit()):
+        return await msg.answer("⚠️ شماره موبایل معتبر نیست (مثال: 09123456789):")
+    await state.update_data(phone=p)
+    await state.set_state(OrderFSM.province)
+    await msg.answer("🗺 <b>استان:</b>")
+
+
+@router.message(OrderFSM.province)
+async def fsm_province(msg: Message, state: FSMContext):
+    if await _cancel(msg, state): return
+    await state.update_data(province=msg.text.strip())
+    await state.set_state(OrderFSM.city)
+    await msg.answer("🏙 <b>شهر:</b>")
+
+
+@router.message(OrderFSM.city)
+async def fsm_city(msg: Message, state: FSMContext):
+    if await _cancel(msg, state): return
+    await state.update_data(city=msg.text.strip())
+    await state.set_state(OrderFSM.address)
+    await msg.answer("🏠 <b>آدرس کامل:</b>")
+
+
+@router.message(OrderFSM.address)
+async def fsm_address(msg: Message, state: FSMContext):
+    if await _cancel(msg, state): return
+    await state.update_data(address=msg.text.strip())
+    await state.set_state(OrderFSM.postal_code)
+    await msg.answer("📮 <b>کد پستی</b> (۱۰ رقم):")
+
+
+@router.message(OrderFSM.postal_code)
+async def fsm_postal(msg: Message, state: FSMContext):
+    if await _cancel(msg, state): return
+    code = msg.text.strip().replace("-", "").replace(" ", "")
+    if not (code.isdigit() and len(code) == 10):
+        return await msg.answer("⚠️ کد پستی باید ۱۰ رقم باشد:")
+    await state.update_data(postal_code=code)
+    data = await state.get_data()
+    p = await get_product(data["product_id"])
+    if not p:
         await state.clear()
-        await msg.answer("انصراف داده شد.", reply_markup=main_menu(msg.from_user.id == config.ADMIN_ID))
-        return
-    await state.update_data(full_name=msg.text)
-    await state.set_state(OrderForm.phone)
-    await msg.answer("📱 شماره موبایل:")
+        return await msg.answer("❌ محصول یافت نشد.")
+    await state.set_state(OrderFSM.confirm)
+    await msg.answer(order_summary(data, p), reply_markup=confirm_order_kb())
 
 
-@router.message(OrderForm.phone)
-async def get_phone(msg: Message, state: FSMContext):
-    if msg.text == "❌ انصراف":
-        await state.clear()
-        await msg.answer("انصراف داده شد.", reply_markup=main_menu(msg.from_user.id == config.ADMIN_ID))
-        return
-    await state.update_data(phone=msg.text)
-    await state.set_state(OrderForm.province)
-    await msg.answer("🗺 استان:")
-
-
-@router.message(OrderForm.province)
-async def get_province(msg: Message, state: FSMContext):
-    if msg.text == "❌ انصراف":
-        await state.clear()
-        await msg.answer("انصراف داده شد.", reply_markup=main_menu(msg.from_user.id == config.ADMIN_ID))
-        return
-    await state.update_data(province=msg.text)
-    await state.set_state(OrderForm.city)
-    await msg.answer("🏙 شهر:")
-
-
-@router.message(OrderForm.city)
-async def get_city(msg: Message, state: FSMContext):
-    if msg.text == "❌ انصراف":
-        await state.clear()
-        await msg.answer("انصراف داده شد.", reply_markup=main_menu(msg.from_user.id == config.ADMIN_ID))
-        return
-    await state.update_data(city=msg.text)
-    await state.set_state(OrderForm.address)
-    await msg.answer("🏠 آدرس کامل:")
-
-
-@router.message(OrderForm.address)
-async def get_address(msg: Message, state: FSMContext):
-    if msg.text == "❌ انصراف":
-        await state.clear()
-        await msg.answer("انصراف داده شد.", reply_markup=main_menu(msg.from_user.id == config.ADMIN_ID))
-        return
-    await state.update_data(address=msg.text)
-    await state.set_state(OrderForm.postal_code)
-    await msg.answer("📮 کد پستی:")
-
-
-@router.message(OrderForm.postal_code)
-async def get_postal_code(msg: Message, state: FSMContext):
-    if msg.text == "❌ انصراف":
-        await state.clear()
-        await msg.answer("انصراف داده شد.", reply_markup=main_menu(msg.from_user.id == config.ADMIN_ID))
-        return
-
+@router.callback_query(F.data == "order:confirm", OrderFSM.confirm)
+async def order_confirm(cb: CallbackQuery, state: FSMContext, bot: Bot):
     data = await state.get_data()
     await state.clear()
-
     p = await get_product(data["product_id"])
     if not p or p["stock"] <= 0:
-        await msg.answer("متأسفانه این محصول به اتمام رسید.")
-        return
-
-    async with aiosqlite.connect(DB) as db:
-        db.row_factory = aiosqlite.Row
-        async with db.execute("SELECT id FROM users WHERE tg_id=?", (msg.from_user.id,)) as cur:
-            user = await cur.fetchone()
-        if not user:
-            await msg.answer("خطا: کاربر یافت نشد. /start را بزنید.")
-            return
-
-        await db.execute("""
-            INSERT INTO orders (user_id, product_id, quantity, total_price, status,
-                full_name, phone, province, city, address, postal_code)
-            VALUES (?, ?, 1, ?, 'pending', ?, ?, ?, ?, ?, ?)
-        """, (user["id"], p["id"], p["price"],
-              data["full_name"], data["phone"], data["province"],
-              data["city"], data["address"], msg.text))
-        await db.execute("UPDATE products SET stock=stock-1 WHERE id=?", (p["id"],))
-        order_id = (await (await db.execute("SELECT last_insert_rowid()")).fetchone())[0]
-        await db.commit()
-
-    invoice = (
-        f"🧾 <b>فاکتور سفارش #{order_id}</b>\n\n"
-        f"📦 محصول: {p['title']}\n"
-        f"💰 مبلغ: {p['price']:,} تومان\n\n"
-        f"👤 نام: {data['full_name']}\n"
-        f"📱 موبایل: {data['phone']}\n"
-        f"🗺 استان: {data['province']}\n"
-        f"🏙 شهر: {data['city']}\n"
-        f"🏠 آدرس: {data['address']}\n"
-        f"📮 کد پستی: {msg.text}\n\n"
-        f"⏳ وضعیت: در انتظار تأیید"
+        return await cb.message.edit_text("❌ متأسفانه موجودی تمام شد.")
+    user = await get_user_by_tg(cb.from_user.id)
+    if not user:
+        return await cb.message.edit_text("❌ خطا: /start بزنید.")
+    oid = await create_order(
+        user_id=user["id"], product_id=p["id"], unit_price=p["price"],
+        full_name=data["full_name"], phone=data["phone"],
+        province=data["province"], city=data["city"],
+        address=data["address"], postal_code=data["postal_code"],
     )
-    await msg.answer(invoice, reply_markup=main_menu(msg.from_user.id == config.ADMIN_ID))
-
-    from keyboards import order_status_kb
-    admin_text = (
-        f"🔔 <b>سفارش جدید #{order_id}</b>\n\n"
-        f"📦 {p['title']} — {p['price']:,} تومان\n"
-        f"👤 {data['full_name']} | {data['phone']}\n"
-        f"📍 {data['province']}، {data['city']}\n"
-        f"🏠 {data['address']}\n"
-        f"📮 {msg.text}"
+    await cb.message.edit_text(
+        f"✅ <b>سفارش #{oid} ثبت شد!</b>\n\n"
+        f"📦 {p['title']}\n💰 {p['price']:,} تومان\n\n"
+        "⏳ پس از تأیید به شما اطلاع داده می‌شود."
     )
-    from aiogram import Bot
-    bot = Bot.get_current()
-    if bot:
-        await bot.send_message(config.ADMIN_ID, admin_text, reply_markup=order_status_kb(order_id))
+    order = await get_order(oid)
+    from bot.keyboards import order_action_kb
+    try:
+        await bot.send_message(
+            ADMIN_ID,
+            f"🔔 <b>سفارش جدید #{oid}</b>\n\n" + admin_order_card(order),
+            reply_markup=order_action_kb(oid, "pending")
+        )
+    except Exception:
+        pass
+    await cb.answer()
 
 
-@router.callback_query(F.data == "my:orders")
-async def my_orders(cb: CallbackQuery):
-    async with aiosqlite.connect(DB) as db:
-        db.row_factory = aiosqlite.Row
-        async with db.execute("""
-            SELECT o.id, p.title, o.total_price, o.status, o.created_at
-            FROM orders o JOIN users u ON o.user_id=u.id
-            JOIN products p ON o.product_id=p.id
-            WHERE u.tg_id=? ORDER BY o.id DESC LIMIT 10
-        """, (cb.from_user.id,)) as cur:
-            orders = await cur.fetchall()
+@router.callback_query(F.data == "order:edit", OrderFSM.confirm)
+async def order_edit(cb: CallbackQuery, state: FSMContext):
+    await state.set_state(OrderFSM.full_name)
+    await cb.message.edit_text("✏️ از ابتدا وارد کنید.\n\n📝 <b>نام و نام خانوادگی:</b>")
+    await cb.answer()
 
+
+@router.callback_query(F.data == "order:cancel")
+async def order_cancel(cb: CallbackQuery, state: FSMContext):
+    await state.clear()
+    await cb.message.edit_text("❌ سفارش لغو شد.")
+    await cb.answer()
+
+
+@router.message(F.text == "📦 سفارش‌های من")
+async def my_orders(msg: Message):
+    user = await get_user_by_tg(msg.from_user.id)
+    if not user:
+        return await msg.answer("ابتدا /start بزنید.")
+    orders = await get_user_orders(user["id"])
     if not orders:
-        await cb.message.edit_text("📭 هنوز سفارشی ثبت نکرده‌اید.")
-        return await cb.answer()
-
-    status_map = {"pending": "⏳ در انتظار", "confirmed": "✅ تأیید شده",
-                  "shipped": "🚚 ارسال شده", "completed": "🎉 تکمیل", "rejected": "❌ رد شده"}
+        return await msg.answer("📭 هنوز سفارشی ثبت نکرده‌اید.")
     text = "📦 <b>سفارشات شما:</b>\n\n"
     for o in orders:
-        text += f"#{o['id']} — {o['title']} — {o['total_price']:,} تومان — {status_map.get(o['status'], o['status'])}\n"
-    await cb.message.edit_text(text)
-    await cb.answer()
+        text += order_card(o) + "\n" + "─" * 20 + "\n"
+    await msg.answer(text)
