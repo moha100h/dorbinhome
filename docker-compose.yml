@@ -1,5 +1,4 @@
 version: "3.9"
-
 services:
   bot:
     build: .
@@ -13,6 +12,6 @@ services:
       options:
         max-size: "10m"
         max-file: "3"
-
 volumes:
   bot_data:
+    name: dorbinhome_data
