@@ -1,0 +1,14 @@
+version: '3.8'
+
+services:
+  bot:
+    build: .
+    restart: always
+    env_file: .env
+    volumes:
+      - bot_data:/data
+    ports:
+      - "5050:5050"
+
+volumes:
+  bot_data:
