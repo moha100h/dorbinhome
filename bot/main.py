@@ -8,6 +8,7 @@ from bot.db.database import init_db
 from bot.handlers import common, purchase, admin
 
 logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)-8s %(name)s: %(message)s")
+logger = logging.getLogger(__name__)
 
 async def main():
     await init_db()
@@ -17,7 +18,7 @@ async def main():
     dp.include_router(purchase.router)
     dp.include_router(admin.router)
     me = await bot.get_me()
-    logging.info(f"Bot @{me.username} started")
+    logger.info(f"Bot @{me.username} started")
     await dp.start_polling(bot, allowed_updates=dp.resolve_used_update_types())
 
 if __name__ == "__main__":
